@@ -6,7 +6,7 @@ import { transcribeChunk } from '@/app/actions';
 export type RecordingStatus = 'idle' | 'permission' | 'recording' | 'paused' | 'stopped' | 'error';
 export type AudioSource = 'mic' | 'tab';
 
-const TRANSCRIPTION_INTERVAL = 4000; // 4 seconds
+const TRANSCRIPTION_INTERVAL = 3000; // 3 seconds
 
 export function useAudioRecorder(onProcessingComplete: (transcript: string) => void) {
   const [status, setStatus] = useState<RecordingStatus>('idle');
@@ -16,29 +16,18 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const fullTranscriptRef = useRef<string>("");
 
-  const stopRecordingFlow = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    mediaRecorderRef.current = null;
-  }, []);
-
-  const processAndTranscribe = useCallback(async () => {
+  const processAndTranscribe = useCallback(async (isFinal: boolean = false) => {
     if (audioChunksRef.current.length === 0) {
+      if (isFinal) {
+        onProcessingComplete(fullTranscriptRef.current);
+      }
       return;
     }
     
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-    audioChunksRef.current = []; // Clear chunks after processing
+    audioChunksRef.current = []; // Clear chunks for the next interval
 
     const reader = new FileReader();
     reader.readAsDataURL(audioBlob);
@@ -48,18 +37,55 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
         try {
           const transcription = await transcribeChunk(base64Audio);
           if (transcription) {
-            setTranscript(prev => prev ? `${prev} ${transcription}` : transcription);
+            fullTranscriptRef.current = fullTranscriptRef.current ? `${fullTranscriptRef.current} ${transcription}` : transcription;
+            setTranscript(fullTranscriptRef.current);
           }
         } catch (e) {
           console.error('Transcription failed', e);
           setError('Transcription failed. Please try again.');
+        } finally {
+            if(isFinal) {
+                onProcessingComplete(fullTranscriptRef.current);
+            }
         }
+      } else if (isFinal) {
+        onProcessingComplete(fullTranscriptRef.current);
       }
     };
-  }, []);
+  }, [onProcessingComplete]);
+
+  const stopRecordingFlow = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.onstop = () => {
+        processAndTranscribe(true);
+        setStatus('stopped');
+        
+        // Clean up stream
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        mediaRecorderRef.current = null;
+      };
+      mediaRecorderRef.current.stop();
+
+    } else {
+       if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+    }
+  }, [processAndTranscribe]);
+
 
   const startRecording = useCallback(async (source: AudioSource) => {
     setTranscript('');
+    fullTranscriptRef.current = "";
     setError(null);
     setStatus('permission');
 
@@ -69,17 +95,15 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } else {
         mediaStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true, // Often required to trigger the picker
+          video: true,
           audio: true,
         });
+         if (mediaStream.getAudioTracks().length === 0) {
+            mediaStream.getTracks().forEach(track => track.stop());
+            throw new Error('No audio track was shared. Please share a tab with audio.');
+        }
       }
       
-      // If it's a screen share, check if an audio track was actually shared.
-      if (source === 'tab' && mediaStream.getAudioTracks().length === 0) {
-        mediaStream.getTracks().forEach(track => track.stop()); // Clean up video track
-        throw new Error('No audio track was shared. Please share a tab with audio.');
-      }
-
       streamRef.current = mediaStream;
       mediaRecorderRef.current = new MediaRecorder(mediaStream, { mimeType: 'audio/webm' });
       audioChunksRef.current = [];
@@ -89,21 +113,12 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
           audioChunksRef.current.push(event.data);
         }
       };
-
-      mediaRecorderRef.current.onstop = () => {
-        processAndTranscribe().finally(() => {
-            onProcessingComplete(transcript + (audioChunksRef.current.length > 0 ? " [finalizing...]" : ""));
-            setStatus('stopped');
-        });
-      };
       
-      mediaRecorderRef.current.start();
+      mediaRecorderRef.current.start(TRANSCRIPTION_INTERVAL);
       setStatus('recording');
 
-      // Periodically request data and transcribe
       timerRef.current = setInterval(() => {
         if (mediaRecorderRef.current?.state === 'recording') {
-            mediaRecorderRef.current?.requestData();
             processAndTranscribe();
         }
       }, TRANSCRIPTION_INTERVAL);
@@ -114,7 +129,7 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
       setStatus('error');
       stopRecordingFlow();
     }
-  }, [stopRecordingFlow, onProcessingComplete, processAndTranscribe, transcript]);
+  }, [stopRecordingFlow, processAndTranscribe]);
 
   const pauseRecording = () => {
     if (mediaRecorderRef.current?.state === 'recording') {
@@ -130,7 +145,6 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
       setStatus('recording');
       timerRef.current = setInterval(() => {
         if (mediaRecorderRef.current?.state === 'recording') {
-            mediaRecorderRef.current?.requestData();
             processAndTranscribe();
         }
       }, TRANSCRIPTION_INTERVAL);
