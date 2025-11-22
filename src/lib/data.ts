@@ -18,7 +18,7 @@ const MOCK_SESSIONS: Session[] = [
     transcript: "Alice: Welcome everyone to the Q3 project kick-off. Today we're going to discuss the new 'Phoenix' project. Bob, can you start with the goals?\nBob: Thanks, Alice. The main goal is to refactor our legacy billing system by the end of the quarter. We need to improve performance by 50%.\nCharlie: That's an ambitious goal. What's the plan for resource allocation?\nAlice: We'll have two dedicated engineers, and we're bringing in a consultant. Bob, you'll be the project lead.\nBob: I'm on it. I'll create the initial JIRA tickets and schedule a follow-up for next week.",
     summary: {
       keyPoints: ["Kick-off for 'Phoenix' project.", "Goal: Refactor legacy billing system by end of Q3.", "Target: 50% performance improvement."],
-      actionItems: ["Bob to create JIRA tickets for the project.", "Bob to schedule a follow-up meeting."],
+      actionItems: ["Bob to create JIRA tickets for the project.", "Bob to schedule a follow-up for next week."],
       decisions: ["Two engineers and one consultant will be allocated.", "Bob is assigned as the project lead."]
     }
   },
@@ -42,17 +42,17 @@ let sessions: Session[] = [...MOCK_SESSIONS];
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function getSessions(): Promise<Session[]> {
-  await delay(500);
+  await delay(0);
   return sessions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 export async function getSessionById(id: string): Promise<Session | undefined> {
-  await delay(300);
+  await delay(0);
   return sessions.find(session => session.id === id);
 }
 
 export async function createSession(transcript: string, summary: any): Promise<Session> {
-  await delay(1000);
+  await delay(0);
   const newSession: Session = {
     id: (sessions.length + 1).toString(),
     title: `Meeting - ${new Date().toLocaleDateString()}`,
