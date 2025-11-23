@@ -26,27 +26,45 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
       return;
     }
     
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    // Log audio chunk details for debugging
+    if (audioChunksRef.current.length === 0) {
+      console.warn('No audio chunks to process.');
+    } else {
+      console.log('Audio chunk size:', audioChunksRef.current.reduce((acc, chunk) => acc + chunk.size, 0));
+      console.log('Audio chunk type:', audioChunksRef.current[0].type);
+    }
+
+    // Force WAV format for maximum compatibility with Gemini API
+    let audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+    console.log('[Recorder] AudioBlob size:', audioBlob.size, 'type:', audioBlob.type);
+    if (audioBlob.size === 0) {
+      setError('No audio data captured. Please check your microphone, browser, and try again.');
+      if (isFinal) onProcessingComplete(fullTranscriptRef.current);
+      return;
+    }
     audioChunksRef.current = []; // Clear chunks for the next interval
 
     const reader = new FileReader();
     reader.readAsDataURL(audioBlob);
     reader.onloadend = async () => {
       const base64Audio = reader.result as string;
-      if(base64Audio) {
+      console.log('[Recorder] base64Audio length:', base64Audio?.length, 'starts with:', base64Audio?.slice(0, 30));
+      if (base64Audio) {
         try {
           const transcription = await transcribeChunk(base64Audio);
-          if (transcription) {
+          if (transcription && transcription.trim()) {
             fullTranscriptRef.current = fullTranscriptRef.current ? `${fullTranscriptRef.current} ${transcription}` : transcription;
             setTranscript(fullTranscriptRef.current);
+          } else {
+            setError('No speech detected or transcription failed. Please speak clearly, check your microphone, and ensure your browser supports audio recording.');
           }
         } catch (e) {
           console.error('Transcription failed', e);
           setError('Transcription failed. Please try again.');
         } finally {
-            if(isFinal) {
-                onProcessingComplete(fullTranscriptRef.current);
-            }
+          if (isFinal) {
+            onProcessingComplete(fullTranscriptRef.current);
+          }
         }
       } else if (isFinal) {
         onProcessingComplete(fullTranscriptRef.current);
@@ -105,7 +123,18 @@ export function useAudioRecorder(onProcessingComplete: (transcript: string) => v
       }
       
       streamRef.current = mediaStream;
-      mediaRecorderRef.current = new MediaRecorder(mediaStream, { mimeType: 'audio/webm' });
+      // Auto-detect the best supported audio format for MediaRecorder
+      let recorder;
+      if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        recorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm;codecs=opus' });
+      } else if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm')) {
+        recorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm' });
+      } else if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/wav')) {
+        recorder = new MediaRecorder(mediaStream, { mimeType: 'audio/wav' });
+      } else {
+        recorder = new MediaRecorder(mediaStream); // Let browser pick
+      }
+      mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
 
       mediaRecorderRef.current.ondataavailable = (event) => {
